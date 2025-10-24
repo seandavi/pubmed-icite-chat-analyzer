@@ -1,0 +1,5 @@
+{
+  "name": "PubMed iCite Chat Analyzer",
+  "description": "An application that fetches publication data from the NIH iCite API using PubMed IDs and allows users to ask questions about the data using a Gemini-powered chatbot.",
+  "requestFramePermissions": []
+}
