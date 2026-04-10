@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { GoogleGenAI, Chat } from '@google/genai';
 import { Article, ChatMessage, ColumnDefinition, ColumnKey } from './types';
 import { fetchICiteData } from './services/iciteService';
 import InputForm from './components/InputForm';
@@ -29,7 +28,6 @@ const App: React.FC = () => {
   const [isBotReplying, setIsBotReplying] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [chat, setChat] = useState<Chat | null>(null);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(new Set(DEFAULT_VISIBLE_COLUMNS));
   const [filter, setFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -46,23 +44,8 @@ const App: React.FC = () => {
     });
   }, []);
 
-  const initializeChat = useCallback((data: Article[]) => {
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-      const systemInstruction = `You are an expert biomedical research assistant. The user has provided the following publication data from the NIH iCite database in JSON format. Your task is to answer questions based *only* on this data. Do not use any external knowledge. If the answer cannot be found in the provided data, state that clearly. Be concise and clear in your answers. Here is the data:\n${JSON.stringify(data, null, 2)}`;
-      
-      const newChat = ai.chats.create({
-        model: 'gemini-2.5-flash',
-        config: {
-          systemInstruction: systemInstruction,
-        }
-      });
-      setChat(newChat);
-      setMessages([{ role: 'model', parts: [{ text: "Hello! I've analyzed the publication data you provided. How can I help you explore these results?" }] }]);
-    } catch (e) {
-      setError("Failed to initialize the chat service. Please check your Gemini API key.");
-      console.error(e);
-    }
+  const initializeChat = useCallback((_data: Article[]) => {
+    setMessages([{ role: 'model', parts: [{ text: "Hello! I've analyzed the publication data you provided. How can I help you explore these results?" }] }]);
   }, []);
 
   const handleFetchData = useCallback(async (pmids: string) => {
@@ -80,7 +63,6 @@ const App: React.FC = () => {
     setError(null);
     setIciteData([]);
     setMessages([]);
-    setChat(null);
     setFilter('');
     setCurrentPage(1);
 
@@ -101,15 +83,30 @@ const App: React.FC = () => {
 
 
   const handleSendMessage = useCallback(async (userMessage: string) => {
-    if (!chat || isBotReplying) return;
+    if (isBotReplying) return;
 
     const newUserMessage: ChatMessage = { role: 'user', parts: [{ text: userMessage }] };
-    setMessages(prev => [...prev, newUserMessage]);
+    const updatedMessages = [...messages, newUserMessage];
+    setMessages(updatedMessages);
     setIsBotReplying(true);
 
     try {
-      const response = await chat.sendMessage({ message: userMessage });
-      const botMessage: ChatMessage = { role: 'model', parts: [{ text: response.text }] };
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: updatedMessages,
+          contextData: iciteData
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to get response from bot');
+      }
+
+      const data = await response.json();
+      const botMessage: ChatMessage = { role: 'model', parts: [{ text: data.text }] };
       setMessages(prev => [...prev, botMessage]);
     } catch (err) {
       console.error(err);
@@ -118,7 +115,7 @@ const App: React.FC = () => {
     } finally {
       setIsBotReplying(false);
     }
-  }, [chat, isBotReplying]);
+  }, [messages, iciteData, isBotReplying]);
   
   const filteredData = useMemo(() => {
     if (!filter) return iciteData;
